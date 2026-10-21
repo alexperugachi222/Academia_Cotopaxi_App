@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react';
 import {
   Alert,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import MotivationalQuote from '../components/MotivationalQuote';
+import SessionChecklist from '../components/SessionChecklist';
 import SettingsModal from '../components/SettingsModal';
 import { colors } from '../constants/theme';
 import usePomodoroEngine from '../hooks/usePomodoroEngine';
@@ -41,7 +44,6 @@ export default function TimerScreen() {
     pauseTimer,
     resumeTimer,
     resetTimer,
-    stopAlarm,
     updateSettings,
     restoreDefaultSettings,
   } = usePomodoroEngine();
@@ -60,11 +62,14 @@ export default function TimerScreen() {
   const toggleTimer = isCounting ? pauseTimer : isPaused ? resumeTimer : startTimer;
 
   return (
-    <View style={styles.screen}>
+    <ScrollView
+      contentContainerStyle={styles.screen}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.header}>
         <Text style={styles.brand}>ACADEMIA COTOPAXI</Text>
         <Text style={styles.title}>Pomodoro</Text>
-        <Text style={styles.subtitle}>Un paso a la vez. Mantén el enfoque.</Text>
+        <MotivationalQuote key={currentPhase} currentPhase={currentPhase} />
       </View>
 
       <View style={styles.timerCard}>
@@ -105,12 +110,12 @@ export default function TimerScreen() {
       <View style={styles.controls}>
         <Pressable
           accessibilityRole="button"
-          disabled={!settingsLoaded}
+          disabled={!settingsLoaded || alarmActive}
           onPress={toggleTimer}
           style={({ pressed }) => [
             styles.primaryButton,
             pressed && styles.buttonPressed,
-            !settingsLoaded && styles.disabledButton,
+            (!settingsLoaded || alarmActive) && styles.disabledButton,
           ]}
         >
           <Text style={styles.primaryButtonText}>
@@ -118,26 +123,15 @@ export default function TimerScreen() {
           </Text>
         </Pressable>
 
-        {alarmActive && (
-          <Pressable
-            accessibilityRole="button"
-            onPress={stopAlarm}
-            style={({ pressed }) => [
-              styles.stopAlarmButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <Text style={styles.stopAlarmButtonText}>Detener</Text>
-          </Pressable>
-        )}
-
         <View style={styles.secondaryControls}>
           <Pressable
             accessibilityRole="button"
+            disabled={alarmActive}
             onPress={resetTimer}
             style={({ pressed }) => [
               styles.secondaryButton,
               styles.resetButton,
+              alarmActive && styles.disabledButton,
               pressed && styles.buttonPressed,
             ]}
           >
@@ -159,6 +153,8 @@ export default function TimerScreen() {
         </View>
       </View>
 
+      <SessionChecklist />
+
       <Text style={styles.footer}>ACADEMIA COTOPAXI · ENFOQUE Y BIENESTAR</Text>
       <SettingsModal
         visible={isSettingsVisible}
@@ -167,19 +163,20 @@ export default function TimerScreen() {
         onReset={restoreDefaultSettings}
         onClose={() => setIsSettingsVisible(false)}
       />
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: colors.background,
     paddingHorizontal: 24,
     paddingTop: 28,
     paddingBottom: 18,
+    gap: 16,
   },
   header: {
     width: '100%',
@@ -196,12 +193,6 @@ const styles = StyleSheet.create({
     color: colors.navy,
     fontSize: 32,
     fontWeight: '800',
-  },
-  subtitle: {
-    marginTop: 4,
-    color: colors.mutedText,
-    fontSize: 14,
-    textAlign: 'center',
   },
   timerCard: {
     width: '100%',
@@ -289,18 +280,6 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: colors.white,
     fontSize: 18,
-    fontWeight: '700',
-  },
-  stopAlarmButton: {
-    minHeight: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    backgroundColor: colors.red,
-  },
-  stopAlarmButtonText: {
-    color: colors.white,
-    fontSize: 16,
     fontWeight: '700',
   },
   secondaryControls: {

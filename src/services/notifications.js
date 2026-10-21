@@ -1,5 +1,7 @@
-import { isRunningInExpoGo } from 'expo';
+import { isRunningInExpoGo, requireOptionalNativeModule } from 'expo';
 import { Platform } from 'react-native';
+
+const nativeAlarm = requireOptionalNativeModule('CotopaxiAlarm');
 
 export const POMODORO_NOTIFICATION_CATEGORY = 'pomodoro-phase-complete';
 export const POMODORO_NOTIFICATION_CHANNEL = 'pomodoro-alarm';
@@ -87,8 +89,8 @@ export function configureNotifications() {
       await Notifications.setNotificationCategoryAsync(POMODORO_NOTIFICATION_CATEGORY, [
         {
           identifier: STOP_ALARM_ACTION,
-          buttonTitle: 'Detener',
-          options: { isDestructive: true, opensAppToForeground: true },
+          buttonTitle: 'Detener alarma',
+          options: { isDestructive: true, opensAppToForeground: false },
         },
       ]);
       return true;
@@ -161,6 +163,10 @@ function createPhaseNotificationContent(Notifications, { phaseLabel, phaseToken 
 }
 
 export async function schedulePhaseNotification({ phaseLabel, targetEndTime, phaseToken }) {
+  if (Platform.OS === 'android' && nativeAlarm) {
+    return nativeAlarm.scheduleAlarm(targetEndTime, phaseToken, phaseLabel);
+  }
+
   const Notifications = await loadNotificationsModule();
   if (!Notifications) {
     return null;
@@ -188,6 +194,10 @@ export async function schedulePhaseNotification({ phaseLabel, targetEndTime, pha
 }
 
 export async function presentPhaseCompletionNotification({ phaseLabel, phaseToken }) {
+  if (Platform.OS === 'android' && nativeAlarm) {
+    return nativeAlarm.startAlarm(phaseToken, phaseLabel);
+  }
+
   const Notifications = await loadNotificationsModule();
   if (!Notifications) {
     return null;
@@ -226,7 +236,18 @@ export async function presentPhaseCompletionNotification({ phaseLabel, phaseToke
   });
 }
 
+export async function isRepeatingAlarmActive() {
+  if (Platform.OS !== 'android' || !nativeAlarm) {
+    return null;
+  }
+  return nativeAlarm.isAlarmActive();
+}
+
 export async function cancelScheduledPhaseNotifications() {
+  if (Platform.OS === 'android' && nativeAlarm) {
+    await nativeAlarm.cancelScheduledAlarm();
+  }
+
   const Notifications = await loadNotificationsModule();
   if (!Notifications) {
     return;
@@ -243,13 +264,12 @@ export async function cancelScheduledPhaseNotifications() {
   );
 }
 
-export async function stopPhaseNotification(notificationIdentifier) {
+export async function dismissPresentedPhaseNotifications(notificationIdentifier) {
   const Notifications = await loadNotificationsModule();
   if (!Notifications) {
     return;
   }
 
-  await cancelScheduledPhaseNotifications();
   if (notificationIdentifier) {
     await Notifications.dismissNotificationAsync(notificationIdentifier);
   } else {
@@ -264,6 +284,11 @@ export async function stopPhaseNotification(notificationIdentifier) {
       ),
     );
   }
+}
+
+export async function stopPhaseNotification(notificationIdentifier) {
+  await cancelScheduledPhaseNotifications();
+  await dismissPresentedPhaseNotifications(notificationIdentifier);
 }
 
 export function addNotificationResponseListener(listener) {

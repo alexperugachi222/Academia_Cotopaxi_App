@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState } from 'react-native';
+import { Alert, AppState, Platform } from 'react-native';
 import {
   DEFAULT_SETTINGS,
   loadSettings,
@@ -13,10 +13,15 @@ import {
   cancelScheduledPhaseNotifications,
   clearInitialNotificationResponse,
   configureNotifications,
+  dismissPresentedPhaseNotifications,
   getInitialNotificationResponse,
+  getNotificationPermission,
   isPomodoroNotification,
+  isRepeatingAlarmActive,
   presentPhaseCompletionNotification,
+  requestNotificationPermission,
   schedulePhaseNotification,
+  STOP_ALARM_ACTION,
   stopPhaseNotification,
 } from '../services/notifications';
 
@@ -119,16 +124,36 @@ export default function usePomodoroEngine() {
   settingsRef.current = settings;
 
   const scheduleForRun = useCallback(async (session, generation) => {
-    const notificationId = await schedulePhaseNotification({
+    if (scheduleGenerationRef.current !== generation) {
+      return;
+    }
+
+    await schedulePhaseNotification({
       phaseLabel: PHASE_LABELS[session.currentPhase],
       targetEndTime: session.targetEndTime,
       phaseToken: session.phaseToken,
     });
-
-    if (scheduleGenerationRef.current !== generation && notificationId) {
-      await cancelScheduledPhaseNotifications();
-    }
   }, []);
+
+  const replaceScheduledPhaseNotification = useCallback(
+    async (session, generation) => {
+      if (Platform.OS === 'android') {
+        await scheduleForRun(session, generation);
+        await dismissPresentedPhaseNotifications();
+        return;
+      }
+
+      try {
+        await stopPhaseNotification();
+      } catch (error) {
+        reportSessionError(error);
+      }
+      if (scheduleGenerationRef.current === generation) {
+        await scheduleForRun(session, generation);
+      }
+    },
+    [dismissPresentedPhaseNotifications, reportSessionError, scheduleForRun],
+  );
 
   const advanceFromCompletedPhase = useCallback(
     (finishedSession, notify) => {
@@ -172,13 +197,14 @@ export default function usePomodoroEngine() {
       scheduleGenerationRef.current += 1;
       setSession(session);
       persistSession(session);
-      cancelScheduledPhaseNotifications().catch(reportSessionError);
 
       if (notify) {
         presentPhaseCompletionNotification({
           phaseLabel: PHASE_LABELS[finishedSession.currentPhase],
           phaseToken: finishedSession.phaseToken,
         }).catch(reportSessionError);
+      } else {
+        cancelScheduledPhaseNotifications().catch(reportSessionError);
       }
     },
     [persistSession, reportSessionError, setSession],
@@ -189,7 +215,10 @@ export default function usePomodoroEngine() {
 
   const processNotificationResponse = useCallback(
     (response) => {
-      if (!isPomodoroNotification(response)) {
+      if (
+        !isPomodoroNotification(response) ||
+        response.actionIdentifier !== STOP_ALARM_ACTION
+      ) {
         return;
       }
 
@@ -408,9 +437,61 @@ export default function usePomodoroEngine() {
     return () => subscription.remove();
   }, [persistSession, setSession]);
 
-  const startTimer = useCallback(() => {
-    if (isCounting || isPaused || !settingsLoaded || remainingSeconds <= 0) {
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !alarmActive) {
+      return undefined;
+    }
+
+    let isMounted = true;
+    const synchronizeStoppedAlarm = async () => {
+      const isActive = await isRepeatingAlarmActive();
+      const session = sessionRef.current;
+      if (isMounted && isActive === false && session?.alarmActive) {
+        const updatedSession = { ...session, alarmActive: false };
+        setSession(updatedSession);
+        persistSession(updatedSession);
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      synchronizeStoppedAlarm().catch(reportSessionError);
+    }, 1000);
+    synchronizeStoppedAlarm().catch(reportSessionError);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [alarmActive, persistSession, reportSessionError, setSession]);
+
+  const startTimer = useCallback(async () => {
+    if (
+      isCounting ||
+      isPaused ||
+      sessionRef.current?.alarmActive ||
+      !settingsLoaded ||
+      remainingSeconds <= 0
+    ) {
       return;
+    }
+
+    if (Platform.OS === 'android') {
+      try {
+        let permission = await getNotificationPermission();
+        if (!permission.granted) {
+          permission = await requestNotificationPermission();
+        }
+        if (!permission.granted) {
+          Alert.alert(
+            'Activa las notificaciones',
+            'Se necesitan para mostrar el botón que detiene la alarma al finalizar el temporizador.',
+          );
+          return;
+        }
+      } catch (error) {
+        reportSessionError(error);
+        return;
+      }
     }
 
     const targetEndTime = Date.now() + remainingSeconds * 1000;
@@ -428,15 +509,14 @@ export default function usePomodoroEngine() {
     const generation = scheduleGenerationRef.current;
     setSession(session);
     persistSession(session);
-    stopPhaseNotification().catch(reportSessionError);
-    scheduleForRun(session, generation).catch(reportSessionError);
+    replaceScheduledPhaseNotification(session, generation).catch(reportSessionError);
   }, [
     isCounting,
     isPaused,
     persistSession,
     remainingSeconds,
     reportSessionError,
-    scheduleForRun,
+    replaceScheduledPhaseNotification,
     setSession,
     settingsLoaded,
   ]);
@@ -470,7 +550,7 @@ export default function usePomodoroEngine() {
     cancelScheduledPhaseNotifications().catch(reportSessionError);
   }, [persistSession, reportSessionError, setSession]);
 
-  const resumeTimer = useCallback(() => {
+  const resumeTimer = useCallback(async () => {
     const session = sessionRef.current;
     if (!session.isPaused || session.remainingSeconds <= 0) {
       return;
@@ -489,11 +569,14 @@ export default function usePomodoroEngine() {
     const generation = scheduleGenerationRef.current;
     setSession(resumedSession);
     persistSession(resumedSession);
-    stopPhaseNotification().catch(reportSessionError);
-    scheduleForRun(resumedSession, generation).catch(reportSessionError);
-  }, [persistSession, reportSessionError, scheduleForRun, setSession]);
+    replaceScheduledPhaseNotification(resumedSession, generation).catch(reportSessionError);
+  }, [persistSession, reportSessionError, replaceScheduledPhaseNotification, setSession]);
 
   const resetTimer = useCallback(() => {
+    if (sessionRef.current?.alarmActive) {
+      return;
+    }
+
     Alert.alert(
       'Reiniciar temporizador',
       '¿Quieres volver al tiempo inicial de esta fase?',
@@ -522,15 +605,6 @@ export default function usePomodoroEngine() {
       ],
       { cancelable: true },
     );
-  }, [persistSession, reportSessionError, setSession]);
-
-  const stopAlarm = useCallback(() => {
-    const session = sessionRef.current;
-    scheduleGenerationRef.current += 1;
-    const stoppedSession = { ...session, alarmActive: false };
-    setSession(stoppedSession);
-    persistSession(stoppedSession);
-    stopPhaseNotification().catch(reportSessionError);
   }, [persistSession, reportSessionError, setSession]);
 
   const applySettings = useCallback(
@@ -589,7 +663,6 @@ export default function usePomodoroEngine() {
     pauseTimer,
     resumeTimer,
     resetTimer,
-    stopAlarm,
     updateSettings,
     restoreDefaultSettings,
   };

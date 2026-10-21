@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SETTINGS_KEY = '@cotopaxi-pomodoro/settings';
 const TIMER_SESSION_KEY = '@cotopaxi-pomodoro/timer-session';
+const CHECKLIST_KEY = '@cotopaxi-pomodoro/checklist';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   studyDurationMinutes: 25,
@@ -129,4 +130,52 @@ export async function loadTimerSession() {
 
 export async function saveTimerSession(session) {
   await AsyncStorage.setItem(TIMER_SESSION_KEY, JSON.stringify(session));
+}
+
+export async function loadChecklist() {
+  const serializedChecklist = await AsyncStorage.getItem(CHECKLIST_KEY);
+  if (serializedChecklist === null) {
+    return [];
+  }
+
+  let tasks;
+  try {
+    tasks = JSON.parse(serializedChecklist);
+  } catch (error) {
+    throw new Error('No se pudo leer la lista de tareas guardada.', { cause: error });
+  }
+
+  if (
+    !Array.isArray(tasks) ||
+    tasks.some(
+      (task) =>
+        !task ||
+        typeof task !== 'object' ||
+        typeof task.id !== 'string' ||
+        typeof task.text !== 'string' ||
+        typeof task.completed !== 'boolean',
+    )
+  ) {
+    throw new Error('La lista de tareas guardada tiene un formato no válido.');
+  }
+
+  return tasks;
+}
+
+export async function saveChecklist(tasks) {
+  if (
+    !Array.isArray(tasks) ||
+    tasks.some(
+      (task) =>
+        !task ||
+        typeof task !== 'object' ||
+        typeof task.id !== 'string' ||
+        typeof task.text !== 'string' ||
+        typeof task.completed !== 'boolean',
+    )
+  ) {
+    throw new Error('No se puede guardar una lista de tareas con formato no válido.');
+  }
+
+  await AsyncStorage.setItem(CHECKLIST_KEY, JSON.stringify(tasks));
 }

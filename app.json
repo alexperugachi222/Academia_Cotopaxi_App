@@ -6,11 +6,25 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/365f4511-72e6-4f05-b1b3-844ad8fe399e"
+    },
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.academiacotopaxi.pomodoro",
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "USE_EXACT_ALARM",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "WAKE_LOCK",
+        "VIBRATE"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
